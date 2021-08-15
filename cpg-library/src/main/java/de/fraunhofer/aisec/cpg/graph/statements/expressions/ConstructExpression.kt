@@ -28,12 +28,14 @@ package de.fraunhofer.aisec.cpg.graph.statements.expressions
 import de.fraunhofer.aisec.cpg.graph.HasType
 import de.fraunhofer.aisec.cpg.graph.Node
 import de.fraunhofer.aisec.cpg.graph.PopulatedByPass
+import de.fraunhofer.aisec.cpg.graph.TypeManager
 import de.fraunhofer.aisec.cpg.graph.declarations.ConstructorDeclaration
 import de.fraunhofer.aisec.cpg.graph.declarations.Declaration
 import de.fraunhofer.aisec.cpg.graph.declarations.FunctionDeclaration
 import de.fraunhofer.aisec.cpg.graph.edge.PropertyEdge
 import de.fraunhofer.aisec.cpg.graph.types.Type
 import de.fraunhofer.aisec.cpg.graph.types.TypeParser
+import de.fraunhofer.aisec.cpg.graph.types.UnknownType
 import de.fraunhofer.aisec.cpg.passes.CallResolver
 import org.apache.commons.lang3.builder.ToStringBuilder
 
@@ -65,12 +67,16 @@ class ConstructExpression : CallExpression(), HasType.TypeListener {
     var instantiates: Declaration? = null
         set(value) {
             field = value
-            if (value != null) {
+            if (value != null && this.type is UnknownType) {
                 setType(TypeParser.createFrom(value.name, true))
             }
         }
 
     override fun typeChanged(src: HasType, root: HasType, oldType: Type) {
+        if (!TypeManager.isTypeSystemActive()) {
+            return
+        }
+
         val previous: Type = this.type
         setType(src.propagationType, root)
         if (previous != this.type) {
@@ -98,10 +104,7 @@ class ConstructExpression : CallExpression(), HasType.TypeListener {
         return super.equals(other) &&
             constructor == other.constructor &&
             arguments == other.arguments &&
-            PropertyEdge.propertyEqualsList(
-                getArgumentsPropertyEdge(),
-                other.getArgumentsPropertyEdge()
-            )
+            PropertyEdge.propertyEqualsList(argumentsPropertyEdge, other.argumentsPropertyEdge)
     }
 
     override fun hashCode(): Int {

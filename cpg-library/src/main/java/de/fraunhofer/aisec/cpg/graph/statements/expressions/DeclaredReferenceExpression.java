@@ -138,6 +138,9 @@ public class DeclaredReferenceExpression extends Expression implements TypeListe
 
   @Override
   public void typeChanged(HasType src, HasType root, Type oldType) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Type previous = this.type;
     setType(src.getPropagationType(), root);
     if (!previous.equals(this.type)) {
@@ -147,6 +150,9 @@ public class DeclaredReferenceExpression extends Expression implements TypeListe
 
   @Override
   public void possibleSubTypesChanged(HasType src, HasType root, Set<Type> oldSubTypes) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Set<Type> subTypes = new HashSet<>(getPossibleSubTypes());
     subTypes.addAll(src.getPossibleSubTypes());
     setPossibleSubTypes(subTypes, root);
@@ -155,9 +161,7 @@ public class DeclaredReferenceExpression extends Expression implements TypeListe
   @Override
   public String toString() {
     return new ToStringBuilder(this, Node.TO_STRING_STYLE)
-        .append("name", getName())
-        .append("type", type)
-        .append("location", getLocation())
+        .append(super.toString())
         .append("refersTo", refersTo)
         .toString();
   }

@@ -30,6 +30,7 @@ import de.fraunhofer.aisec.cpg.graph.HasType;
 import de.fraunhofer.aisec.cpg.graph.HasType.TypeListener;
 import de.fraunhofer.aisec.cpg.graph.Node;
 import de.fraunhofer.aisec.cpg.graph.SubGraph;
+import de.fraunhofer.aisec.cpg.graph.TypeManager;
 import de.fraunhofer.aisec.cpg.graph.types.PointerType;
 import de.fraunhofer.aisec.cpg.graph.types.Type;
 import de.fraunhofer.aisec.cpg.helpers.Util;
@@ -116,7 +117,8 @@ public class UnaryOperator extends Expression implements TypeListener {
 
   private boolean getsDataFromInput(TypeListener listener) {
     checked.clear();
-    return input.getTypeListeners().stream().anyMatch(l -> getsDataFromInput(l, listener));
+    return input != null
+        && input.getTypeListeners().stream().anyMatch(l -> getsDataFromInput(l, listener));
   }
 
   public String getOperatorCode() {
@@ -146,6 +148,9 @@ public class UnaryOperator extends Expression implements TypeListener {
 
   @Override
   public void typeChanged(HasType src, HasType root, Type oldType) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Type previous = this.type;
 
     if (src == input) {
@@ -169,7 +174,12 @@ public class UnaryOperator extends Expression implements TypeListener {
       } else if (operatorCode.equals("&")) {
         newType = src.getPropagationType().dereference();
       }
-      input.setType(newType, this);
+
+      // We are a fuzzy parser, so while this should not happen, there is no guarantee that input is
+      // not null
+      if (input != null) {
+        input.setType(newType, this);
+      }
     }
 
     if (!previous.equals(this.type)) {
@@ -179,6 +189,9 @@ public class UnaryOperator extends Expression implements TypeListener {
 
   @Override
   public void possibleSubTypesChanged(HasType src, HasType root, Set<Type> oldSubTypes) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     if (src instanceof TypeListener && getsDataFromInput((TypeListener) src)) {
       return;
     }

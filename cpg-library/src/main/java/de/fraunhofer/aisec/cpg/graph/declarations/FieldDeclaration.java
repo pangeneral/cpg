@@ -25,6 +25,7 @@
  */
 package de.fraunhofer.aisec.cpg.graph.declarations;
 
+import de.fraunhofer.aisec.cpg.graph.HasInitializer;
 import de.fraunhofer.aisec.cpg.graph.HasType;
 import de.fraunhofer.aisec.cpg.graph.HasType.TypeListener;
 import de.fraunhofer.aisec.cpg.graph.Node;
@@ -35,7 +36,7 @@ import de.fraunhofer.aisec.cpg.graph.statements.expressions.InitializerListExpre
 import de.fraunhofer.aisec.cpg.graph.types.Type;
 import java.util.*;
 import org.apache.commons.lang3.builder.ToStringBuilder;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jetbrains.annotations.Nullable;
 import org.neo4j.ogm.annotation.Relationship;
 
 /**
@@ -43,7 +44,7 @@ import org.neo4j.ogm.annotation.Relationship;
  * with the field as well as an initializer {@link Expression} which provides an initial value for
  * the field.
  */
-public class FieldDeclaration extends ValueDeclaration implements TypeListener {
+public class FieldDeclaration extends ValueDeclaration implements TypeListener, HasInitializer {
 
   @SubGraph("AST")
   @Nullable
@@ -129,6 +130,9 @@ public class FieldDeclaration extends ValueDeclaration implements TypeListener {
 
   @Override
   public void typeChanged(HasType src, HasType root, Type oldType) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     if (!TypeManager.getInstance().isUnknown(this.type)
         && src.getPropagationType().equals(oldType)) {
       return;
@@ -160,6 +164,9 @@ public class FieldDeclaration extends ValueDeclaration implements TypeListener {
 
   @Override
   public void possibleSubTypesChanged(HasType src, HasType root, Set<Type> oldSubTypes) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Set<Type> subTypes = new HashSet<>(getPossibleSubTypes());
     subTypes.addAll(src.getPossibleSubTypes());
     setPossibleSubTypes(subTypes, root);

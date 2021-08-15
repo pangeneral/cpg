@@ -28,6 +28,7 @@ package de.fraunhofer.aisec.cpg.passes.scopes;
 import static de.fraunhofer.aisec.cpg.helpers.Util.errorWithFileLocation;
 
 import de.fraunhofer.aisec.cpg.frontends.LanguageFrontend;
+import de.fraunhofer.aisec.cpg.frontends.golang.GoLanguageFrontend;
 import de.fraunhofer.aisec.cpg.graph.HasType;
 import de.fraunhofer.aisec.cpg.graph.Node;
 import de.fraunhofer.aisec.cpg.graph.declarations.*;
@@ -58,9 +59,9 @@ public class ScopeManager {
   private static final Logger LOGGER = LoggerFactory.getLogger(ScopeManager.class);
 
   /** Allows to map the AST nodes to the associated scope */
-  private final Map<Node, Scope> scopeMap = new HashMap<>();
+  private final Map<Node, Scope> scopeMap = new IdentityHashMap<>();
 
-  private final Map<String, Scope> fqnScopeMap = new HashMap<>();
+  private final Map<String, Scope> fqnScopeMap = new IdentityHashMap<>();
 
   private Scope currentScope = null;
   private LanguageFrontend lang;
@@ -75,6 +76,33 @@ public class ScopeManager {
 
   public void setLang(LanguageFrontend lang) {
     this.lang = lang;
+  }
+
+  /**
+   * Combine the state of several scope managers into this one.
+   *
+   * @param toMerge The scope managers to merge into this one
+   */
+  public void mergeFrom(Collection<ScopeManager> toMerge) {
+    List<GlobalScope> globalScopes =
+        toMerge.stream()
+            .map(s -> s.scopeMap.get(null))
+            .filter(GlobalScope.class::isInstance)
+            .map(GlobalScope.class::cast)
+            .collect(Collectors.toList());
+    Scope currGlobalScope = this.scopeMap.get(null);
+    if (!(currGlobalScope instanceof GlobalScope)) {
+      LOGGER.error("Scope for null node is not a GlobalScope!");
+    } else {
+      ((GlobalScope) currGlobalScope).mergeFrom(globalScopes);
+    }
+
+    for (ScopeManager manager : toMerge) {
+      this.scopeMap.putAll(manager.scopeMap);
+      this.fqnScopeMap.putAll(manager.fqnScopeMap);
+    }
+
+    this.scopeMap.put(null, currGlobalScope);
   }
 
   private void pushScope(Scope scope) {
@@ -160,21 +188,8 @@ public class ScopeManager {
     return (RecordDeclaration) node;
   }
 
-  public List<ValueDeclaration> getGlobals() {
-    GlobalScope globalS = (GlobalScope) getFirstScopeThat(scope -> scope instanceof GlobalScope);
-    if (globalS != null) {
-      return globalS.getValueDeclarations();
-    } else {
-      return new ArrayList<>();
-    }
-  }
-
   public Scope getCurrentScope() {
     return this.currentScope;
-  }
-
-  public void addGlobal(VariableDeclaration global) {
-    getGlobals().add(global);
   }
 
   public void enterScopeIfExists(Node nodeToScope) {
@@ -223,6 +238,9 @@ public class ScopeManager {
       } else if (nodeToScope instanceof RecordDeclaration) {
         newScope =
             new RecordScope(nodeToScope, getCurrentNamePrefix(), lang.getNamespaceDelimiter());
+      } else if (nodeToScope instanceof TemplateDeclaration) {
+        newScope =
+            new TemplateScope(nodeToScope, getCurrentNamePrefix(), lang.getNamespaceDelimiter());
       } else if (nodeToScope instanceof TryStatement) {
         newScope = new TryScope(nodeToScope);
       } else if (nodeToScope instanceof NamespaceDeclaration) {
@@ -369,7 +387,7 @@ public class ScopeManager {
     } else {
       LabelStatement labelStatement = getLabelStatement(breakStatement.getLabel());
       if (labelStatement != null) {
-        Scope scope = getScopeOfStatment(labelStatement.getSubStatement());
+        Scope scope = getScopeOfStatement(labelStatement.getSubStatement());
         ((IBreakable) scope).addBreakStatement(breakStatement);
       }
     }
@@ -388,7 +406,7 @@ public class ScopeManager {
     } else {
       LabelStatement labelStatement = getLabelStatement(continueStatement.getLabel());
       if (labelStatement != null) {
-        Scope scope = getScopeOfStatment(labelStatement.getSubStatement());
+        Scope scope = getScopeOfStatement(labelStatement.getSubStatement());
         ((IContinuable) scope).addContinueStatement(continueStatement);
       }
     }
@@ -478,7 +496,8 @@ public class ScopeManager {
       scopeForValueDeclaration.addValueDeclaration((ValueDeclaration) declaration);
     } else if (declaration instanceof RecordDeclaration
         || declaration instanceof NamespaceDeclaration
-        || declaration instanceof EnumDeclaration) {
+        || declaration instanceof EnumDeclaration
+        || declaration instanceof TemplateDeclaration) {
       StructureDeclarationScope scopeForStructureDeclaration =
           (StructureDeclarationScope)
               getFirstScopeThat(scope -> scope instanceof StructureDeclarationScope);
@@ -545,8 +564,49 @@ public class ScopeManager {
     return resolve(currentScope, ref);
   }
 
+  /**
+   * Tries to resolve a function in a call expression.
+   *
+   * @param call the call expression
+   * @return a list of possible functions
+   */
   public List<FunctionDeclaration> resolveFunction(CallExpression call) {
-    return resolveFunction(currentScope, call);
+    var scope = currentScope;
+
+    // First, we need to check, whether we have some kind of scoping. this is currently only limited
+    // to the Go frontend,
+    // but should work for other languages as well - but is not tested.
+    if (lang instanceof GoLanguageFrontend
+        && call.getFqn() != null
+        && call.getFqn().contains(lang.getNamespaceDelimiter())) {
+      // extract the scope name, it is usually a name space, but could probably be something else
+      // as well in other languages
+      var scopeName =
+          call.getFqn().substring(0, call.getFqn().lastIndexOf(lang.getNamespaceDelimiter()));
+
+      // this is a scoped call. we need to explicitly jump to that particular scope
+      var scopes =
+          this.getScopesThat(
+              predicate ->
+                  (predicate instanceof NameScope)
+                      && Objects.equals(predicate.scopedName, scopeName));
+
+      if (scopes == null || scopes.isEmpty()) {
+        LOGGER.error(
+            "Could not find the scope {} needed to resolve the call {}. Falling back to the current scope",
+            scopeName,
+            call.getFqn());
+        scope = currentScope;
+      } else {
+        scope = scopes.get(0);
+      }
+    }
+
+    return resolveFunction(scope, call);
+  }
+
+  public List<FunctionTemplateDeclaration> resolveFunctionTemplateDeclaration(CallExpression call) {
+    return resolveFunctionTemplateDeclaration(currentScope, call);
   }
 
   public List<FunctionDeclaration> resolveFunctionStopScopeTraversalOnDefinition(
@@ -591,6 +651,93 @@ public class ScopeManager {
   }
 
   /**
+   * Traverses the scope and looks for Declarations of type c which matches f
+   *
+   * @param scope
+   * @param p predicate the element must match to
+   * @param c class of the object we want to find by traversing
+   * @param <T>
+   * @return
+   */
+  @NonNull
+  private <T> List<T> resolveValueDeclaration(Scope scope, Predicate<T> p, Class<T> c) {
+    if (scope instanceof ValueDeclarationScope) {
+      var list =
+          ((ValueDeclarationScope) scope)
+              .getValueDeclarations().stream()
+                  .filter(c::isInstance)
+                  .map(c::cast)
+                  .filter(p)
+                  .collect(Collectors.toList());
+
+      if (!list.isEmpty()) {
+        return list;
+      }
+    }
+
+    return scope.getParent() != null
+        ? resolveValueDeclaration(scope.getParent(), p, c)
+        : new ArrayList<>();
+  }
+
+  /**
+   * Traverses the scope and looks for Declarations of type c which matches f
+   *
+   * @param scope
+   * @param p predicate the element must match to
+   * @param c class of the object we want to find by traversing
+   * @param <T>
+   * @return
+   */
+  @NonNull
+  private <T> List<T> resolveStructureDeclaration(Scope scope, Predicate<T> p, Class<T> c) {
+    if (scope instanceof StructureDeclarationScope) {
+      var list =
+          ((StructureDeclarationScope) scope)
+              .getStructureDeclarations().stream()
+                  .filter(c::isInstance)
+                  .map(c::cast)
+                  .filter(p)
+                  .collect(Collectors.toList());
+
+      if (list.isEmpty()) {
+        for (Declaration declaration :
+            ((StructureDeclarationScope) scope).getStructureDeclarations()) {
+          if (declaration instanceof RecordDeclaration) {
+            list =
+                ((RecordDeclaration) declaration)
+                    .getTemplates().stream()
+                        .filter(c::isInstance)
+                        .map(c::cast)
+                        .filter(p)
+                        .collect(Collectors.toList());
+          }
+        }
+      }
+
+      if (!list.isEmpty()) {
+        return list;
+      }
+    }
+
+    return scope.getParent() != null
+        ? resolveStructureDeclaration(scope.getParent(), p, c)
+        : new ArrayList<>();
+  }
+
+  /**
+   * @param scope where we are searching for the FunctionTemplateDeclarations
+   * @param call CallExpression we want to resolve an invocation target for
+   * @return List of FunctionTemplateDeclaration that match the name provided in the CallExpression
+   *     and therefore are invocation candidates
+   */
+  private List<FunctionTemplateDeclaration> resolveFunctionTemplateDeclaration(
+      Scope scope, CallExpression call) {
+    return resolveStructureDeclaration(
+        scope, c -> c.getName().equals(call.getName()), FunctionTemplateDeclaration.class);
+  }
+
+  /**
    * Resolves a function reference of a call expression.
    *
    * @param scope
@@ -599,23 +746,10 @@ public class ScopeManager {
    */
   @NonNull
   private List<FunctionDeclaration> resolveFunction(Scope scope, CallExpression call) {
-    if (scope instanceof ValueDeclarationScope) {
-      var list =
-          ((ValueDeclarationScope) scope)
-              .getValueDeclarations().stream()
-                  .filter(FunctionDeclaration.class::isInstance)
-                  .map(FunctionDeclaration.class::cast)
-                  .filter(
-                      f ->
-                          f.getName().equals(call.getName()) && f.hasSignature(call.getSignature()))
-                  .collect(Collectors.toList());
-
-      if (!list.isEmpty()) {
-        return list;
-      }
-    }
-
-    return scope.getParent() != null ? resolveFunction(scope.getParent(), call) : new ArrayList<>();
+    return resolveValueDeclaration(
+        scope,
+        f -> f.getName().equals(call.getName()) && f.hasSignature(call.getSignature()),
+        FunctionDeclaration.class);
   }
 
   /**
@@ -629,21 +763,8 @@ public class ScopeManager {
   @NonNull
   private List<FunctionDeclaration> resolveFunctionStopScopeTraversalOnDefinition(
       Scope scope, CallExpression call) {
-    if (scope instanceof ValueDeclarationScope) {
-      var list =
-          ((ValueDeclarationScope) scope)
-              .getValueDeclarations().stream()
-                  .filter(FunctionDeclaration.class::isInstance)
-                  .map(FunctionDeclaration.class::cast)
-                  .filter(f -> f.getName().equals(call.getName()))
-                  .collect(Collectors.toList());
-      if (!list.isEmpty()) {
-        return list;
-      }
-    }
-    return scope.getParent() != null
-        ? resolveFunctionStopScopeTraversalOnDefinition(scope.getParent(), call)
-        : new ArrayList<>();
+    return resolveValueDeclaration(
+        scope, f -> f.getName().equals(call.getName()), FunctionDeclaration.class);
   }
 
   /**
@@ -703,95 +824,8 @@ public class ScopeManager {
     return null;
   }
 
-  @Nullable
-  public Declaration resolveInRecord(
-      RecordDeclaration recordDeclaration, DeclaredReferenceExpression ref) {
-    List<Declaration> members = new ArrayList<>();
-    members.addAll(recordDeclaration.getFields());
-    members.addAll(recordDeclaration.getMethods());
-    members.addAll(recordDeclaration.getRecords());
-
-    for (Declaration member : members) {
-      if (member.getName().equals(ref.getName())) {
-        return member;
-      }
-    }
-    return null;
-  }
-
-  @Nullable
-  public Declaration resolveInInheritanceHierarchy(
-      RecordDeclaration recordDeclaration, DeclaredReferenceExpression ref) {
-    Declaration resolved = resolveInRecord(recordDeclaration, ref);
-    if (resolved != null) {
-      return resolved;
-    }
-    // Here we resolve the member in the order the set returns the ancestors. As soon as we support
-    // a Language that
-    // allows diamond pattern style inheritance and member overloading, that would yield a ambiguous
-    // declaration in
-    // C++, algorithms like C3-Linearization have to be implemented
-    for (RecordDeclaration ancestor : recordDeclaration.getSuperTypeDeclarations()) {
-      resolved = resolveInInheritanceHierarchy(ancestor, ref);
-      if (resolved != null) {
-        return resolved;
-      }
-    }
-    return null;
-  }
-
-  public Scope getScopeOfStatment(Node node) {
+  public Scope getScopeOfStatement(Node node) {
     return scopeMap.getOrDefault(node, null);
-  }
-
-  public void connectToLocal(DeclaredReferenceExpression referenceExpression) {
-    if (isInBlock()) {
-      CompoundStatement currentBlock = getCurrentBlock();
-      if (expressionRefersToDeclaration(referenceExpression, currentBlock.getLocals())) {
-        return;
-      }
-    }
-
-    if (isInFunction()) {
-      FunctionDeclaration currentFunction = getCurrentFunction();
-      if (currentFunction != null
-          && expressionRefersToDeclaration(referenceExpression, currentFunction.getParameters())) {
-        return;
-      }
-    }
-
-    if (isInRecord()) {
-      RecordDeclaration currentRecord = getCurrentRecord();
-      if (expressionRefersToDeclaration(referenceExpression, currentRecord.getFields())) {
-        return;
-      }
-    }
-    expressionRefersToDeclaration(referenceExpression, getGlobals());
-  }
-
-  private <T extends ValueDeclaration> boolean expressionRefersToDeclaration(
-      DeclaredReferenceExpression referenceExpression, List<T> variables) {
-    // look for a LOCAL with the same name
-    Optional<T> any =
-        variables.stream()
-            .filter(param -> Objects.equals(param.getName(), referenceExpression.getName()))
-            .findAny();
-
-    if (any.isPresent()) {
-      T declaration = any.get();
-
-      referenceExpression.setRefersTo(declaration);
-      referenceExpression.setType(declaration.getType());
-      LOGGER.debug(
-          "Connecting {} to method parameter {} of type {}",
-          referenceExpression,
-          declaration,
-          declaration.getType());
-
-      return true;
-    }
-
-    return false;
   }
 
   /**

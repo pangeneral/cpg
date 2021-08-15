@@ -216,7 +216,6 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
 
     binaryOperator.setLhs(lhs);
     binaryOperator.setRhs(rhs);
-    binaryOperator.setType(lhs.getType());
 
     return binaryOperator;
   }
@@ -231,24 +230,19 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
     for (VariableDeclarator variable : variableDeclarationExpr.getVariables()) {
       ResolvedValueDeclaration resolved = variable.resolve();
 
+      Type declarationType = this.lang.getTypeAsGoodAsPossible(variable, resolved);
+      declarationType.setAdditionalTypeKeywords(
+          variableDeclarationExpr.getModifiers().stream()
+              .map(m -> m.getKeyword().asString())
+              .collect(Collectors.joining(" ")));
+
       VariableDeclaration declaration =
           NodeBuilder.newVariableDeclaration(
-              resolved.getName(),
-              this.lang.getTypeAsGoodAsPossible(variable, resolved),
-              variable.toString(),
-              false);
+              resolved.getName(), declarationType, variable.toString(), false);
 
-      if (declaration.getType() instanceof PointerType
-          && ((PointerType) declaration.getType()).isArray()) {
+      if (declarationType instanceof PointerType && ((PointerType) declarationType).isArray()) {
         declaration.setIsArray(true);
       }
-
-      declaration
-          .getType()
-          .setAdditionalTypeKeywords(
-              variableDeclarationExpr.getModifiers().stream()
-                  .map(m -> m.getKeyword().asString())
-                  .collect(Collectors.joining(" ")));
 
       Optional<Expression> oInitializer = variable.getInitializer();
 
@@ -267,6 +261,8 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
       }
       lang.setCodeAndRegion(declaration, variable);
       declarationStatement.addToPropertyEdgeDeclaration(declaration);
+
+      lang.processAnnotations(declaration, variableDeclarationExpr);
 
       lang.getScopeManager().addDeclaration(declaration);
     }
@@ -548,8 +544,6 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
         DeclaredReferenceExpression declaredReferenceExpression =
             NodeBuilder.newDeclaredReferenceExpression(symbol.getName(), type, nameExpr.toString());
 
-        lang.getScopeManager().connectToLocal(declaredReferenceExpression);
-
         return declaredReferenceExpression;
       }
     } catch (UnsolvedSymbolException ex) {
@@ -577,8 +571,6 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
 
       if (recordDeclaration != null && Objects.equals(recordDeclaration.getName(), name)) {
         declaredReferenceExpression.setRefersTo(recordDeclaration);
-      } else {
-        lang.getScopeManager().connectToLocal(declaredReferenceExpression);
       }
 
       return declaredReferenceExpression;
@@ -636,7 +628,6 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
             unaryExpr.toString());
 
     unaryOperator.setInput(expression);
-    unaryOperator.setType(expression.getType());
 
     return unaryOperator;
   }
@@ -702,7 +693,8 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
         scopeName = scope.toString();
       }
 
-      Statement base = handle(scope);
+      de.fraunhofer.aisec.cpg.graph.statements.expressions.Expression base =
+          (de.fraunhofer.aisec.cpg.graph.statements.expressions.Expression) handle(scope);
 
       // If the base directly refers to a record, then this is a static call
       if (base instanceof DeclaredReferenceExpression
@@ -722,7 +714,8 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
 
         lang.setCodeAndRegion(
             member,
-            methodCallExpr); // This will also overwrite the code set to the empty string set above
+            methodCallExpr
+                .getName()); // This will also overwrite the code set to the empty string set above
         callExpression =
             NodeBuilder.newMemberCallExpression(
                 name, qualifiedName, base, member, ".", methodCallExpr.toString());
@@ -744,7 +737,7 @@ public class ExpressionHandler extends Handler<Statement, Expression, JavaLangua
       }
     } else {
       callExpression =
-          NodeBuilder.newCallExpression(name, qualifiedName, methodCallExpr.toString());
+          NodeBuilder.newCallExpression(name, qualifiedName, methodCallExpr.toString(), false);
     }
 
     callExpression.setType(TypeParser.createFrom(typeString, true));

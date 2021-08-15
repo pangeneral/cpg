@@ -29,6 +29,7 @@ import de.fraunhofer.aisec.cpg.ExperimentalPython
 import de.fraunhofer.aisec.cpg.TranslationConfiguration
 import de.fraunhofer.aisec.cpg.frontends.LanguageFrontend
 import de.fraunhofer.aisec.cpg.frontends.TranslationException
+import de.fraunhofer.aisec.cpg.graph.TypeManager
 import de.fraunhofer.aisec.cpg.graph.declarations.TranslationUnitDeclaration
 import de.fraunhofer.aisec.cpg.passes.scopes.ScopeManager
 import de.fraunhofer.aisec.cpg.sarif.PhysicalLocation
@@ -46,6 +47,7 @@ class PythonLanguageFrontend(config: TranslationConfiguration, scopeManager: Sco
 
     @Throws(TranslationException::class)
     override fun parse(file: File): TranslationUnitDeclaration {
+        TypeManager.getInstance().setLanguageFrontend(this)
         return parseInternal(file.readText(Charsets.UTF_8), file.path)
     }
 
@@ -64,28 +66,54 @@ class PythonLanguageFrontend(config: TranslationConfiguration, scopeManager: Sco
     }
 
     private fun parseInternal(code: String, path: String): TranslationUnitDeclaration {
-        val topLevel = Path.of("src/main/python")
-        val entryScript = topLevel.resolve("main.py").toAbsolutePath()
+        // check, if the cpg.py is either directly available in the current directory or in the
+        // src/main/python folder
+        val modulePath = Path.of("cpg.py")
+
+        val possibleLocations =
+            listOf(
+                Path.of(".").resolve(modulePath),
+                Path.of("src/main/python").resolve(modulePath),
+                Path.of("cpg-library/src/main/python").resolve(modulePath)
+            )
+
+        var found = false
+
+        var entryScript: Path? = null
+        possibleLocations.forEach {
+            if (it.toFile().exists()) {
+                found = true
+                entryScript = it.toAbsolutePath()
+            }
+        }
+
+        if (!found) {
+            log.error("Could not find cpg.py")
+            throw TranslationException(
+                "Could not find cpg.py. We expect it to be either in the current working directory, in src/main/python/cpg.py or in cpg-library/src/main/python/cpg.py."
+            )
+        }
 
         val tu: TranslationUnitDeclaration
-
+        var interp: SubInterpreter? = null
         try {
             JepSingleton // configure Jep
-            val interp = SubInterpreter(JepConfig().setRedirectOutputStreams(true))
+            interp = SubInterpreter(JepConfig().setRedirectOutputStreams(true))
 
-            // TODO: extract main.py in a real python module with multiple files
+            // TODO: extract cpg.py in a real python module with multiple files
 
             // load script
             interp.runScript(entryScript.toString())
 
             // run python function parse_code()
             tu = interp.invoke("parse_code", code, path, this) as TranslationUnitDeclaration
-            interp.close()
         } catch (e: JepException) {
             e.printStackTrace()
             throw TranslationException("Python failed with message: $e")
         } catch (e: Exception) {
             throw e
+        } finally {
+            interp?.close()
         }
 
         return tu

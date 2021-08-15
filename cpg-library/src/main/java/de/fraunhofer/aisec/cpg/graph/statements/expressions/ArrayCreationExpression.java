@@ -30,6 +30,7 @@ import static de.fraunhofer.aisec.cpg.graph.edge.PropertyEdge.unwrap;
 import de.fraunhofer.aisec.cpg.graph.HasType;
 import de.fraunhofer.aisec.cpg.graph.HasType.TypeListener;
 import de.fraunhofer.aisec.cpg.graph.SubGraph;
+import de.fraunhofer.aisec.cpg.graph.TypeManager;
 import de.fraunhofer.aisec.cpg.graph.declarations.VariableDeclaration;
 import de.fraunhofer.aisec.cpg.graph.edge.PropertyEdge;
 import de.fraunhofer.aisec.cpg.graph.types.Type;
@@ -48,7 +49,7 @@ public class ArrayCreationExpression extends Expression implements TypeListener 
    * {@link #dimensions} or an initializer.
    */
   @SubGraph("AST")
-  private InitializerListExpression initializer;
+  private Expression initializer;
 
   /**
    * Specifies the dimensions of the array that is to be created. Many languages, such as Java,
@@ -59,11 +60,11 @@ public class ArrayCreationExpression extends Expression implements TypeListener 
   @SubGraph("AST")
   private List<PropertyEdge<Expression>> dimensions = new ArrayList<>();
 
-  public InitializerListExpression getInitializer() {
+  public Expression getInitializer() {
     return initializer;
   }
 
-  public void setInitializer(InitializerListExpression initializer) {
+  public void setInitializer(Expression initializer) {
     if (this.initializer != null) {
       this.initializer.unregisterTypeListener(this);
       this.removePrevDFG(initializer);
@@ -110,6 +111,9 @@ public class ArrayCreationExpression extends Expression implements TypeListener 
 
   @Override
   public void typeChanged(HasType src, HasType root, Type oldType) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Type previous = this.type;
     setType(src.getPropagationType(), root);
 
@@ -120,6 +124,9 @@ public class ArrayCreationExpression extends Expression implements TypeListener 
 
   @Override
   public void possibleSubTypesChanged(HasType src, HasType root, Set<Type> oldSubTypes) {
+    if (!TypeManager.isTypeSystemActive()) {
+      return;
+    }
     Set<Type> subTypes = new HashSet<>(getPossibleSubTypes());
     subTypes.addAll(src.getPossibleSubTypes());
     setPossibleSubTypes(subTypes, root);

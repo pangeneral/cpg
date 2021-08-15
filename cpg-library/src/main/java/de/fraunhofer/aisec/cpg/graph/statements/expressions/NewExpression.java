@@ -25,13 +25,17 @@
  */
 package de.fraunhofer.aisec.cpg.graph.statements.expressions;
 
+import de.fraunhofer.aisec.cpg.graph.HasInitializer;
 import de.fraunhofer.aisec.cpg.graph.Node;
 import de.fraunhofer.aisec.cpg.graph.SubGraph;
+import java.util.List;
 import java.util.Objects;
 import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.checkerframework.checker.nullness.qual.Nullable;
+import org.neo4j.ogm.annotation.Relationship;
 
 /** Represents the creation of a new object through the <code>new</code> keyword. */
-public class NewExpression extends Expression {
+public class NewExpression extends Expression implements HasInitializer {
 
   /** The initializer expression. */
   @SubGraph("AST")
@@ -42,20 +46,24 @@ public class NewExpression extends Expression {
   }
 
   public void setInitializer(Expression initializer) {
-    // TODO: The VariableDeclaration::setInitializer does some DFG stuff. Needed here aswell?
-
-    if (this.initializer instanceof TypeListener) {
-      this.unregisterTypeListener((TypeListener) this.initializer);
-    }
-
     this.initializer = initializer;
+  }
 
-    // if the initializer implements a type listener, inform it about our type changes
-    // since the type is tied to the declaration but it is convenient to have the type
-    // information in the initializer, i.e. in a ConstructExpression.
-    if (initializer instanceof TypeListener) {
-      this.registerTypeListener((TypeListener) initializer);
-    }
+  /**
+   * We need a way to store the templateParameters that a NewExpression might have before the
+   * ConstructExpression is created
+   */
+  @Relationship(value = "TEMPLATE_PARAMETERS", direction = "OUTGOING")
+  @SubGraph("AST")
+  @Nullable
+  private List<Node> templateParameters = null;
+
+  public List<Node> getTemplateParameters() {
+    return templateParameters;
+  }
+
+  public void setTemplateParameters(List<Node> templateParameters) {
+    this.templateParameters = templateParameters;
   }
 
   @Override

@@ -25,7 +25,9 @@
  */
 package de.fraunhofer.aisec.cpg.graph.types;
 
+import de.fraunhofer.aisec.cpg.frontends.LanguageFrontend;
 import de.fraunhofer.aisec.cpg.graph.TypeManager;
+import de.fraunhofer.aisec.cpg.graph.TypeManager.Language;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -45,11 +47,11 @@ public class TypeParser {
   private static final Logger log = LoggerFactory.getLogger(TypeParser.class);
 
   public static final String UNKNOWN_TYPE_STRING = "UNKNOWN";
-  private static final List<String> primitives =
+  public static final List<String> PRIMITIVES =
       List.of("byte", "short", "int", "long", "float", "double", "boolean", "char");
   private static final Pattern functionPtrRegex =
       Pattern.compile(
-          "(?<functionptr>[\\h|(]+[a-zA-Z0-9_$.<>:]*\\*\\h*[a-zA-Z0-9_$.<>:]*[\\h|)]+)\\h*(?<args>\\(+[a-zA-Z0-9_$.<>,*&\\h]*\\))");
+          "(?:(?<functionptr>[\\h(]+[a-zA-Z0-9_$.<>:]*\\*\\h*[a-zA-Z0-9_$.<>:]*[\\h)]+)\\h*)(?<args>\\(+[a-zA-Z0-9_$.<>,\\*\\&\\h]*\\))");
 
   private static Supplier<TypeManager.Language> languageSupplier =
       () -> TypeManager.getInstance().getLanguage();
@@ -267,7 +269,8 @@ public class TypeParser {
   }
 
   private static boolean isUnknownType(String typeName) {
-    return typeName.equals(UNKNOWN_TYPE_STRING);
+    return typeName.equals(UNKNOWN_TYPE_STRING)
+        || (languageSupplier.get() == Language.JAVA && typeName.equals("var"));
   }
 
   /**
@@ -547,7 +550,7 @@ public class TypeParser {
    */
   private static boolean isPrimitiveType(@NonNull List<String> stringList) {
     for (String s : stringList) {
-      if (primitives.contains(s)) {
+      if (PRIMITIVES.contains(s)) {
         return true;
       }
     }
@@ -568,7 +571,7 @@ public class TypeParser {
     boolean foundPrimitive = false;
 
     for (String s : typeBlocks) {
-      if (primitives.contains(s)) {
+      if (PRIMITIVES.contains(s)) {
         if (primitiveType.length() > 0) {
           primitiveType.append(" ");
         }
@@ -577,11 +580,11 @@ public class TypeParser {
     }
 
     for (String s : typeBlocks) {
-      if (primitives.contains(s) && !foundPrimitive) {
+      if (PRIMITIVES.contains(s) && !foundPrimitive) {
         joinedTypeBlocks.add(primitiveType.toString());
         foundPrimitive = true;
       } else {
-        if (!primitives.contains(s)) {
+        if (!PRIMITIVES.contains(s)) {
           joinedTypeBlocks.add(s);
         }
       }
@@ -808,7 +811,7 @@ public class TypeParser {
       finalType = new IncompleteType();
     } else if (isUnknownType(typeName)) {
       // UnknownType -> no information on how to process this type
-      finalType = new UnknownType(typeName);
+      finalType = new UnknownType(UNKNOWN_TYPE_STRING);
     } else {
       // ObjectType
       // Obtain possible generic List from TypeString
@@ -844,6 +847,29 @@ public class TypeParser {
     }
 
     return finalType;
+  }
+
+  public static Type createFrom(@NonNull String type, boolean resolveAlias, LanguageFrontend lang) {
+    Type templateType = searchForTemplateTypes(type, lang);
+    if (templateType != null) {
+      return templateType;
+    }
+    Type createdType = createFrom(type, resolveAlias);
+
+    if (createdType instanceof SecondOrderType) {
+      templateType = searchForTemplateTypes(createdType.getRoot().getName(), lang);
+      if (templateType != null) {
+        createdType.setRoot(templateType);
+      }
+    }
+
+    return createdType;
+  }
+
+  private static Type searchForTemplateTypes(@NonNull String type, LanguageFrontend lang) {
+    return TypeManager.getInstance()
+        .searchTemplateScopeForDefinedParameterizedTypes(
+            lang.getScopeManager().getCurrentScope(), type);
   }
 
   /**
