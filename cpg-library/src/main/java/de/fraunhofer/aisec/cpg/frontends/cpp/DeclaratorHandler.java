@@ -157,7 +157,21 @@ class DeclaratorHandler extends Handler<Declaration, IASTNameOwner, CXXLanguageF
       return newConstructorDeclaration(name, code, recordDeclaration);
     }
 
-    return newMethodDeclaration(name, code, false, recordDeclaration);
+    var method = newMethodDeclaration(name, code, false, recordDeclaration);
+
+    // create the receiver
+    var receiver =
+        NodeBuilder.newVariableDeclaration(
+            "this",
+            recordDeclaration != null
+                ? TypeParser.createFrom(recordDeclaration.getName(), false)
+                : UnknownType.getUnknownType(),
+            "this",
+            false);
+
+    method.setReceiver(receiver);
+
+    return method;
   }
 
   private ValueDeclaration handleFunctionDeclarator(CPPASTFunctionDeclarator ctx) {
