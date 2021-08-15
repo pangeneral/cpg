@@ -372,7 +372,7 @@ class ExpressionHandler extends Handler<Expression, IASTInitializerClause, CXXLa
           NodeBuilder.newDeclaredReferenceExpression(
               "this",
               recordDeclaration != null
-                  ? recordDeclaration.getThis().getType()
+                  ? TypeParser.createFrom(recordDeclaration.getName(), false)
                   : UnknownType.getUnknownType(),
               base.getCode());
       base.setLocation(location);

@@ -168,6 +168,7 @@ class DeclaratorHandler extends Handler<Declaration, IASTNameOwner, CXXLanguageF
                 : UnknownType.getUnknownType(),
             "this",
             false);
+    receiver.setImplicit(true);
 
     method.setReceiver(receiver);
 
@@ -396,7 +397,6 @@ class DeclaratorHandler extends Handler<Declaration, IASTNameOwner, CXXLanguageF
     lang.getScopeManager().addDeclaration(recordDeclaration);
 
     lang.getScopeManager().enterScope(recordDeclaration);
-    lang.getScopeManager().addDeclaration(recordDeclaration.getThis());
 
     processMembers(ctx);
 

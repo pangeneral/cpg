@@ -748,7 +748,7 @@ class CXXLanguageFrontendTest extends BaseTest {
 
     assertEquals("SomeClass", recordDeclaration.getName());
     assertEquals("class", recordDeclaration.getKind());
-    assertEquals(3, recordDeclaration.getFields().size());
+    assertEquals(2, recordDeclaration.getFields().size());
 
     var field = recordDeclaration.getField("field");
     assertNotNull(field);
@@ -1140,10 +1140,6 @@ class CXXLanguageFrontendTest extends BaseTest {
 
     // ... and nothing else
     assertEquals(3, localNames.size());
-
-    RecordDeclaration clazz = declaration.getDeclarationAs(0, RecordDeclaration.class);
-    assertEquals("this", clazz.getFields().get(0).getName());
-    assertEquals(1, clazz.getFields().size());
   }
 
   @Test
